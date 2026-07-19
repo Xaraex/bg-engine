@@ -89,6 +89,15 @@ Module._start();
 const analyzeMove = Module.cwrap('web_analyze_move', 'string', ['number','number','number']);
 ```
 
+## Known limitations
+
+The two-sided bearoff database (`gnubg_ts0.bd`, ~6.6 MB) is not packaged,
+following the upstream web port (download size). Positions with few
+checkers on both sides in the home boards are evaluated with the one-sided
+database instead of exact two-sided values: cube *decisions* match desktop
+gnubg in testing, but cubeful equities in that position class can differ
+by a few hundredths.
+
 ## Testing
 
 ```sh
