@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>gnubg engine worker test</title>
+<style>body { font-family: monospace; white-space: pre; padding: 1rem; }</style>
+</head>
+<body id="log">gnubg engine worker test
+</body>
+<script type="module">
+import { GnubgEngine } from '../dist/engine-client.js';
+
+const log = (s) => { document.getElementById('log').textContent += s + '\n'; };
+
+const START = '4HPwATDgc/ABMA';
+
+async function run() {
+  const engine = new GnubgEngine('../dist/engine.worker.js');
+
+  let t = performance.now();
+  await engine.init();
+  log(`init: ${(performance.now() - t).toFixed(0)} ms`);
+
+  await engine.setPosition(START);
+  const { posId } = await engine.getPosition();
+  log(`round-trip: ${posId} ${posId === START ? 'OK' : 'MISMATCH'}`);
+
+  for (const ply of [0, 1, 2]) {
+    await engine.setPosition(START);
+    t = performance.now();
+    const res = await engine.analyzeMove(3, 1, ply);
+    const ms = performance.now() - t;
+    log(`3-1 @${ply}-ply: ${res.moves[0].move} eq ${res.moves[0].equity.toFixed(3)} (${ms.toFixed(0)} ms)`);
+  }
+
+  await engine.setPosition(START);
+  t = performance.now();
+  const cube = await engine.analyzeCube(2);
+  log(`cube @2-ply: ${cube.decision} (${(performance.now() - t).toFixed(0)} ms)`);
+
+  log('DONE');
+}
+
+run().catch((e) => log('ERROR: ' + e.message));
+</script>
+</html>

@@ -1,36 +1,110 @@
-gnubg_web is a port of [GNU Backgammon](https://www.gnu.org/software/gnubg/) to the web, with nearly all the features of the original.
+# gnubg WASM engine
 
-A Javascript GUI replaces the GTK-based GUI in the original.
+[GNU Backgammon](https://www.gnu.org/software/gnubg/) (gnubg) 1.05 compiled to
+WebAssembly with [Emscripten](https://emscripten.org/), exposing a small
+JSON-based analysis API for use in browsers (via a Web Worker) or Node.
 
-Building the source
--------------------
+Based on [hwatheod/gnubg-web](https://github.com/hwatheod/gnubg-web), an
+Emscripten port of gnubg with a JavaScript UI. This fork strips the demo UI
+and instead exports a minimal engine API: position setup, chequer-play
+analysis, cube analysis and static evaluation, all with gnubg's neural nets
+and cubeful evaluations.
 
-gnubg_web is built using [Emscripten](https://emscripten.org/), which compiles the gnubg C source code and the glib libraries used by it, into Javascript and [Webassembly](https://webassembly.org/).  Webassembly is supported by the latest modern browsers.
+## License
 
-Instructions for building and testing:
+GPLv3 — see [COPYING](COPYING). This is a derivative work of GNU Backgammon
+(GPLv3), © the GNU Backgammon authors. The Emscripten port scaffolding is by
+[hwatheod](https://github.com/hwatheod/gnubg-web). Engine API additions
+(`gnubg/web_api.c`, `js/`, `build_engine.sh`) are GPLv3 as well.
 
-1. Install [Emscripten](https://emscripten.org/).  Then activate the PATH and other environment variables by running `source /path/to/emscripten/emsdk_env.sh`.  For more information on this step, see the Emscripten documentation. The latest version of Emscripten which has been tested to successfully build `gnubg_web` is 2.0.23.
+If you serve the compiled `.wasm`/`.js`/`.data` artifacts to browsers, the
+GPL requires making this corresponding source available.
 
-2. Execute `./build.sh` from within the gnubg_web directory.
+## Building
 
-3. This will generate several files within a `build` directory.  To test the build locally, start a webserver inside the `build` directory.  If you have Python 3 installed, a simple way is to run `python -m http.server 8000` from within the `build` directory. (For Python 2, use `python -m SimpleHTTPServer 8000`.) Then go to `http://localhost:8000/gnubg_web.html` from your browser.  Note that opening the `gnubg_web.html` file directly from your browser probably won't work, because of [CORS](https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS) restrictions for local files on the latest browsers.  If you really cannot get anything else to work, you can look up how to disable such restrictions in your browser, but this is not recommended.
+Requires Emscripten. The known-good toolchain is **emsdk 2.0.23** (newer
+emsdks need source changes; not yet done).
 
-What has been modified from the original GNU Backgammon code?
--------------------------------------------------------------
+```sh
+# one-time toolchain setup
+git clone https://github.com/emscripten-core/emsdk.git
+cd emsdk
+./emsdk install 2.0.23
+./emsdk activate 2.0.23
+source ./emsdk_env.sh      # emsdk_env.bat / .ps1 on Windows
 
-The `gnubg` subdirectory contains the original source code for GNU Backgammon version 1.05.000, with the following changes:
+# build the engine
+cd /path/to/this/repo
+./build_engine.sh
+```
 
-1. Some source files are not needed in the web version, and have been moved to a `removed_files` subdirectory within `gnubg`, which doesn't get compiled when building `gnubg_web`. This includes the GTK-related files (since the GTK GUI has been replaced by a Javascript GUI), `openurl` (for opening files within a browser) and `external` (for connecting to an external player).
+Outputs in `dist/`:
 
-2. A few modifications to the original source have been made, primarily to interact with the Javascript GUI properly.  These changes are marked with `#ifdef WEB` or `#ifndef WEB` blocks.
+| File | Purpose |
+|---|---|
+| `gnubg-engine.js` | Emscripten glue (MODULARIZE'd, `createGnubgModule`) |
+| `gnubg-engine.wasm` | The engine |
+| `gnubg-engine.data` | Preloaded assets: neural net weights (`gnubg.wd`), one-sided bearoff DB, match equity tables |
+| `engine.worker.js` | Web Worker wrapping the module (message protocol) |
+| `engine-client.js` | Promise-based client for the worker (ES module) |
 
-3. The `packaged_files` subdirectory consists of several data files needed.  These are the neural network weights `gnubg.wd`, the one-sided bearoff database `gnubg_os0.bd`, all the match equity tables in the `met` subdirectory, and some startup settings in `.gnubg/gnubgrc` needed by the web version.  Note that due to its size, the two-sided bearoff database `gnubg_ts0.bd` is currently not packaged. However, it is included in the `gnubg` subdirectory. If you wish to package it, you can copy this file to the `packaged_files` subdirectory before building.
+The original gnubg-web demo build (text-command UI) is still available via
+`./build.sh`.
 
-4. Sounds have been disabled.  Although it probably wouldn't be difficult to get them working using Javascript, it didn't seem worth the increased binary size (which increases the download time when serving the binary over the web).
+## API
 
-The glib source code
---------------------
+In a browser:
 
-GNU Backgammon uses the [glib](https://developer.gnome.org/glib/) libraries extensively.  Because Emscripten needs to build everything from scratch, a copy of the glib 2.62.0 source code is included in the subdirectory `glib/glib-2.62.0`, configured to work with Emscripten.  Many of glib's necessary configuration parameters (`#define`s) have been consolidated into `config.h` within `gnubg`.
+```js
+import { GnubgEngine } from './engine-client.js';
 
-Not all of `glib` is needed for compiling `gnubg_web`, so some of the `*.c` source files have been renamed as `*.c_do_not_compile`.  If you make some changes that need one of the files, you should rename them back to `*.c`.  However, note that some of the source files -- particularly anything related to Windows, such as `gwin32` --  will not work in the Emscripten environment.
+const engine = new GnubgEngine('/engine/engine.worker.js');
+await engine.init();                       // loads WASM + NN weights
+
+await engine.setPosition('4HPwATDgc/ABMA'); // gnubg Position ID (on-roll perspective)
+// optional: engine.setMatchId(...) or engine.setCube({...}) for cube/match state
+
+const result = await engine.analyzeMove(3, 1, 2);  // die1, die2, plies (0..3)
+// { moves: [ { move: "8/5 6/5", equity: 0.163, diff: 0,
+//              probs: { win, winG, winBG, loseG, loseBG } }, ... ],
+//   totalMoves: n }   — sorted best first, top 5, cubeful equities
+
+const cube = await engine.analyzeCube(2);
+// { decision: "No double, take", equities: { optimal, noDouble, doubleTake, doublePass }, probs }
+
+const evaln = await engine.evaluate(2);
+// { equity, cubefulEquity, probs }
+```
+
+Position state is engine-side: `setPosition` resets to a centred money-game
+cube; `setCube`/`setMatchId` override it. Equities are always from the
+perspective of the player on roll.
+
+In Node (e.g. build-time precomputation):
+
+```js
+const createGnubgModule = require('./dist/gnubg-engine.js');
+const Module = await createGnubgModule({ locateFile: f => `${__dirname}/dist/${f}` });
+Module._start();
+const analyzeMove = Module.cwrap('web_analyze_move', 'string', ['number','number','number']);
+```
+
+## Testing
+
+```sh
+node test/run-node.js       # validates opening-roll best moves at 2-ply
+node test/run-node.js 0     # 0-ply (fast)
+```
+
+## What was changed relative to gnubg-web
+
+- Added `gnubg/web_api.c` — JSON analysis API (`web_set_position`,
+  `web_set_cube`, `web_set_matchid`, `web_analyze_move`, `web_analyze_cube`,
+  `web_evaluate`, `web_get_position`).
+- Added `build_engine.sh` — engine-only MODULARIZE'd build (no HTML UI).
+- Added `js/engine.worker.js` + `js/engine-client.js` — worker wrapper and client.
+- Added `test/run-node.js` — reference-position validation harness.
+
+The upstream port's README is preserved as
+[README.upstream.md](README.upstream.md) (what was removed from desktop
+gnubg, glib build details, packaged data files).
